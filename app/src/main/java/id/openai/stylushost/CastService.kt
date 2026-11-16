@@ -210,7 +210,6 @@ class CastService : Service() {
     private fun startWebSocketServer() {
         val server = object : WebSocketServer(InetSocketAddress("0.0.0.0", SERVER_PORT)) {
             override fun onOpen(conn: WebSocket, handshake: ClientHandshake) {
-                conn.isTcpNoDelay = true
                 authenticated[conn] = false
                 conn.send(JSONObject().put("type", "hello").put("message", "Kirim kode pairing").toString())
             }
@@ -243,8 +242,6 @@ class CastService : Service() {
                         StylusAccessibilityService.enqueueRemoteTouch(action, x, y, pressure)
                     }
                 } catch (error: Exception) {
-                    Log.w(TAG, "Pesan WebSocket tidak valid", error)
-                                    } catch (error: Exception) {
                     Log.w(TAG, "Pesan WebSocket tidak valid", error)
                 }
             }
