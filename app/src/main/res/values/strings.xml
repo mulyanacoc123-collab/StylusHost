@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">StylusHost</string>
+    <string name="accessibility_description">Menerima input stylus dari tablet yang dipasangkan dan mengirimkannya sebagai gesture ke layar HP.</string>
+</resources>

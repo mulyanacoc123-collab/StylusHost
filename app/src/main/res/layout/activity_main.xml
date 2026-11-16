@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#F4F6FA"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="24dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="StylusHost"
+            android:textColor="#172033"
+            android:textSize="28sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="HP utama • Screen cast 720p • WebSocket :8080"
+            android:textColor="#536078"
+            android:textSize="14sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="22dp"
+            android:text="Alamat IP lokal HP"
+            android:textColor="#536078"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/ipAddressText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="Mencari alamat IP..."
+            android:textColor="#172033"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:text="Kode pairing (masukkan di tablet)"
+            android:textColor="#536078"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/pairingCodeText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:letterSpacing="0.12"
+            android:text="--------"
+            android:textColor="#2457C5"
+            android:textSize="26sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/accessibilityButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="22dp"
+            android:text="Aktifkan layanan Accessibility" />
+
+        <Button
+            android:id="@+id/startButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="Mulai Screen Cast (720p)" />
+
+        <Button
+            android:id="@+id/stopButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Hentikan Screen Cast" />
+
+        <TextView
+            android:id="@+id/statusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:background="#E7ECF6"
+            android:padding="14dp"
+            android:text="Status: belum berjalan"
+            android:textColor="#26334D"
+            android:textSize="14sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:lineSpacingExtra="4dp"
+            android:text="Urutan penggunaan:
+1. Sambungkan HP dan tablet ke Wi-Fi yang sama.
+2. Aktifkan layanan Accessibility di atas.
+3. Tekan Mulai Screen Cast dan setujui dialog perekaman layar Android.
+4. Buka ibisPaint X di HP dalam posisi landscape.
+5. Di tablet, masukkan IP dan kode pairing, lalu Connect.
+
+Catatan: sentuhan sintetis memakai Accessibility API. Pressure dikirim sebagai metadata, tetapi Android tidak mengizinkan dispatchGesture mengatur tekanan digitizer asli."
+            android:textColor="#536078"
+            android:textSize="13sp" />
+    </LinearLayout>
+</ScrollView>
