@@ -1,6 +1,5 @@
 package id.openai.stylushost
 
-import android.os.SystemClock
 import android.app.Activity
 import android.app.Notification
 import android.app.NotificationChannel
@@ -21,7 +20,10 @@ import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
+import android.os.SystemClock
+import android.util.DisplayMetrics
 import android.util.Log
+import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import org.java_websocket.WebSocket
 import org.java_websocket.handshake.ClientHandshake
@@ -32,7 +34,6 @@ import java.net.InetSocketAddress
 import java.nio.ByteBuffer
 import java.security.MessageDigest
 import java.util.Collections
-import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.max
 import kotlin.math.min
 
@@ -45,31 +46,13 @@ class CastService : Service() {
     private var lastEncodeAtMs: Long = 0L
     private var workerThread: HandlerThread? = null
     private var workerHandler: Handler? = null
-    private val latestJpeg = AtomicReference<ByteArray?>(null)
+    private var reusableBitmap: Bitmap? = null
+    private val jpegBuffer = ByteArrayOutputStream(256 * 1024)
     private val authenticated = Collections.synchronizedMap(mutableMapOf<WebSocket, Boolean>())
-
-    private val framePump = object : Runnable {
-        override fun run() {
-            val bytes = latestJpeg.get()
-            if (bytes != null) {
-                val targets = synchronized(authenticated) {
-                    authenticated.filterValues { it }.keys.toList()
-                }
-                targets.forEach { socket ->
-                    try {
-                        if (socket.isOpen) socket.send(bytes)
-                    } catch (error: Exception) {
-                        Log.w(TAG, "Gagal mengirim frame", error)
-                    }
-                }
-            }
-            workerHandler?.postDelayed(this, FRAME_INTERVAL_MS)
-        }
-    }
 
     override fun onCreate() {
         super.onCreate()
-        workerThread = HandlerThread("StylusHost-Capture").also { it.start() }
+        workerThread = HandlerThread("StylusHost-Capture", android.os.Process.THREAD_PRIORITY_DISPLAY).also { it.start() }
         workerHandler = Handler(workerThread!!.looper)
         createNotificationChannel()
     }
@@ -117,17 +100,26 @@ class CastService : Service() {
 
             startWebSocketServer()
             startVirtualDisplay(mediaProjection)
-            workerHandler?.removeCallbacks(framePump)
-            workerHandler?.post(framePump)
         } catch (error: Exception) {
             Log.e(TAG, "Tidak dapat memulai MediaProjection", error)
             stopSelf()
         }
     }
 
+    private fun computeStreamDimensions(): Pair<Int, Int> {
+        val metrics = DisplayMetrics()
+        @Suppress("DEPRECATION")
+        (getSystemService(WINDOW_SERVICE) as WindowManager).defaultDisplay.getRealMetrics(metrics)
+        val longSide = max(metrics.widthPixels, metrics.heightPixels).toFloat()
+        val shortSide = min(metrics.widthPixels, metrics.heightPixels).toFloat()
+        val aspect = if (shortSide > 0f) longSide / shortSide else (16f / 9f)
+        val targetWidth = TARGET_LONG_SIDE
+        val targetHeight = ((targetWidth / aspect).toInt() / 2) * 2
+        return Pair(targetWidth, max(480, targetHeight))
+    }
+
     private fun startVirtualDisplay(mediaProjection: MediaProjection) {
-        val width = STREAM_WIDTH
-        val height = STREAM_HEIGHT
+        val (width, height) = computeStreamDimensions()
         val densityDpi = resources.displayMetrics.densityDpi
         val reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 3)
         imageReader = reader
@@ -135,7 +127,6 @@ class CastService : Service() {
             val image = try {
                 source.acquireLatestImage()
             } catch (error: Exception) {
-                Log.w(TAG, "Gagal mengambil frame", error)
                 null
             } ?: return@setOnImageAvailableListener
 
@@ -144,6 +135,22 @@ class CastService : Service() {
                 image.close()
                 return@setOnImageAvailableListener
             }
+
+            val targets = synchronized(authenticated) {
+                authenticated.filterValues { it }.keys.toList()
+            }
+            if (targets.isEmpty()) {
+                image.close()
+                return@setOnImageAvailableListener
+            }
+
+            // Cegah penumpukan jaringan: lewati frame jika antrean Wi-Fi sedang penuh
+            val readyTargets = targets.filter { it.isOpen && !it.hasBufferedData() }
+            if (readyTargets.isEmpty()) {
+                image.close()
+                return@setOnImageAvailableListener
+            }
+
             lastEncodeAtMs = now
 
             try {
@@ -153,29 +160,43 @@ class CastService : Service() {
                 val rowStride = plane.rowStride
                 val rowPadding = rowStride - pixelStride * width
                 val paddedWidth = width + max(0, rowPadding / max(1, pixelStride))
-                val paddedBitmap = Bitmap.createBitmap(paddedWidth, height, Bitmap.Config.ARGB_8888)
-                buffer.rewind()
-                paddedBitmap.copyPixelsFromBuffer(buffer)
-                val cropped = if (paddedWidth != width) {
-                    Bitmap.createBitmap(paddedBitmap, 0, 0, width, height)
-                } else {
-                    paddedBitmap
+
+                var bmp = reusableBitmap
+                if (bmp == null || bmp.isRecycled || bmp.width != paddedWidth || bmp.height != height) {
+                    bmp?.recycle()
+                    bmp = Bitmap.createBitmap(paddedWidth, height, Bitmap.Config.ARGB_8888)
+                    reusableBitmap = bmp
                 }
-                val output = ByteArrayOutputStream(128 * 1024)
-                cropped.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, output)
-                latestJpeg.set(output.toByteArray())
-                output.close()
-                if (cropped !== paddedBitmap) cropped.recycle()
-                paddedBitmap.recycle()
+
+                buffer.rewind()
+                bmp.copyPixelsFromBuffer(buffer)
+
+                val cropped = if (paddedWidth != width) {
+                    Bitmap.createBitmap(bmp, 0, 0, width, height)
+                } else {
+                    bmp
+                }
+
+                jpegBuffer.reset()
+                cropped.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, jpegBuffer)
+                val bytes = jpegBuffer.toByteArray()
+
+                if (cropped !== bmp) cropped.recycle()
+
+                readyTargets.forEach { socket ->
+                    try {
+                        socket.send(bytes)
+                    } catch (_: Exception) { }
+                }
             } catch (error: Exception) {
-                Log.w(TAG, "Konversi frame JPEG gagal", error)
+                Log.w(TAG, "Konversi frame gagal", error)
             } finally {
                 image.close()
             }
         }, workerHandler)
 
         virtualDisplay = mediaProjection.createVirtualDisplay(
-            "StylusHost-720p",
+            "StylusHost-HD",
             width,
             height,
             densityDpi,
@@ -189,6 +210,7 @@ class CastService : Service() {
     private fun startWebSocketServer() {
         val server = object : WebSocketServer(InetSocketAddress("0.0.0.0", SERVER_PORT)) {
             override fun onOpen(conn: WebSocket, handshake: ClientHandshake) {
+                conn.isTcpNoDelay = true
                 authenticated[conn] = false
                 conn.send(JSONObject().put("type", "hello").put("message", "Kirim kode pairing").toString())
             }
@@ -222,6 +244,8 @@ class CastService : Service() {
                     }
                 } catch (error: Exception) {
                     Log.w(TAG, "Pesan WebSocket tidak valid", error)
+                                    } catch (error: Exception) {
+                    Log.w(TAG, "Pesan WebSocket tidak valid", error)
                 }
             }
 
@@ -232,14 +256,14 @@ class CastService : Service() {
             }
 
             override fun onError(conn: WebSocket?, ex: Exception?) {
-                Log.w(TAG, "WebSocket error", ex)
                 if (conn != null) authenticated.remove(conn)
             }
 
             override fun onStart() {
-                Log.i(TAG, "WebSocket aktif di port $SERVER_PORT")
+                Log.i(TAG, "WebSocket 60FPS aktif di port $SERVER_PORT")
             }
         }
+        server.isTcpNoDelay = true
         socketServer = server
         server.connectionLostTimeout = 15
         server.start()
@@ -273,8 +297,8 @@ class CastService : Service() {
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_menu_camera)
-            .setContentTitle("StylusHost sedang menyiarkan layar")
-            .setContentText("JPEG 720p • WebSocket port $SERVER_PORT")
+            .setContentTitle("StylusHost HD 60FPS Aktif")
+            .setContentText("WebSocket port $SERVER_PORT")
             .setContentIntent(openIntent)
             .setOngoing(true)
             .addAction(android.R.drawable.ic_media_pause, "Stop", stopIntent)
@@ -287,7 +311,9 @@ class CastService : Service() {
         try { imageReader?.close() } catch (_: Exception) { }
         try { projection?.stop() } catch (_: Exception) { }
         projection = null
-        try { socketServer?.stop(1000) } catch (error: Exception) { Log.w(TAG, "Stop server", error) }
+        try { reusableBitmap?.recycle() } catch (_: Exception) { }
+        reusableBitmap = null
+        try { socketServer?.stop(1000) } catch (_: Exception) { }
         socketServer = null
         authenticated.clear()
         workerThread?.quitSafely()
@@ -309,9 +335,8 @@ class CastService : Service() {
         const val EXTRA_PAIRING_CODE = "pairing_code"
         private const val CHANNEL_ID = "stylushost_capture"
         private const val NOTIFICATION_ID = 808
-        private const val STREAM_WIDTH = 1280
-        private const val STREAM_HEIGHT = 720
-        private const val JPEG_QUALITY = 65
-        private const val FRAME_INTERVAL_MS = 40L
+        private const val TARGET_LONG_SIDE = 1600
+        private const val JPEG_QUALITY = 82
+        private const val FRAME_INTERVAL_MS = 16L
     }
 }
