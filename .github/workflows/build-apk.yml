@@ -1,6 +1,6 @@
 name: Build APK
 on: [push]
-jobs: 
+jobs:
   build:
     runs-on: ubuntu-latest
     steps:
@@ -8,7 +8,12 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           java-version: '17'
-       ‚\İšXa†][Ûˆ	İ[]\š[‰ÂˆH\Ù\ÎˆÜqÇ&FÆRö7F–öç2÷6WGWÖw&FÆTc0¢v—Fƒ ¢w&FÆR×fW'6–öã¢s‚ãRp¢Ò'Vã¢w&FÆR …ÍÍ•µ‰±••‰Õœ(€€€€€€´ÕÍ•Ìè…Ñ¥½¹Ì½ÕÁ±½…²Ë-artifact@v4
+          distribution: 'temurin'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.5'
+      - run: gradle assembleDebug
+      - uses: actions/upload-artifact@v4
         with:
           name: StylusHost-APK
           path: app/build/outputs/apk/debug/*.apk
