@@ -3,7 +3,6 @@ package id.openai.stylushost
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.graphics.Path
-import android.graphics.Point
 import android.graphics.PointF
 import android.os.Handler
 import android.os.Looper
@@ -12,7 +11,7 @@ import android.util.Log
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import java.util.ArrayDeque
-import kotlin.math.abs
+import kotlin.math.hypot
 import kotlin.math.max
 
 class StylusAccessibilityService : AccessibilityService() {
@@ -43,7 +42,6 @@ class StylusAccessibilityService : AccessibilityService() {
     }
 
     private fun receive(action: String, nx: Float, ny: Float, pressure: Float) {
-        // Pressure is accepted from the protocol, but GestureDescription exposes no pressure field to apply it.
         val (screenWidth, screenHeight) = displaySize()
         val x = (nx.coerceIn(0f, 1f) * (screenWidth - 1)).coerceIn(0f, (screenWidth - 1).toFloat())
         val y = (ny.coerceIn(0f, 1f) * (screenHeight - 1)).coerceIn(0f, (screenHeight - 1).toFloat())
@@ -69,9 +67,9 @@ class StylusAccessibilityService : AccessibilityService() {
         resetStroke()
         val path = Path().apply {
             moveTo(x, y)
-            lineTo(x + 0.25f, y)
+            lineTo(x + 0.5f, y)
         }
-        lastX = x + 0.25f
+        lastX = x + 0.5f
         lastY = y
         val first = GestureDescription.StrokeDescription(path, 0, SEGMENT_DURATION_MS, true)
         activeStroke = first
@@ -79,6 +77,10 @@ class StylusAccessibilityService : AccessibilityService() {
     }
 
     private fun appendPoint(x: Float, y: Float) {
+        val tail = queuedPoints.peekLast()
+        val refX = tail?.x ?: lastX
+        val refY = tail?.y ?: lastY
+        if (hypot(x - refX, y - refY) < 1.2f && !endingStroke) return
         if (queuedPoints.size >= MAX_QUEUED_POINTS) queuedPoints.removeFirst()
         queuedPoints.addLast(PointF(x, y))
     }
@@ -86,19 +88,30 @@ class StylusAccessibilityService : AccessibilityService() {
     private fun dispatchNextSegment() {
         if (isDispatching) return
         val previous = activeStroke ?: return
-        if (queuedPoints.isEmpty()) return
+        if (queuedPoints.isEmpty() && !endingStroke) return
 
-        val point = queuedPoints.removeFirst()
-        var targetX = point.x
-        var targetY = point.y
-        if (abs(targetX - lastX) < 0.05f && abs(targetY - lastY) < 0.05f) {
-            targetX = lastX + 0.2f
+        val path = Path().apply { moveTo(lastX, lastY) }
+        var curX = lastX
+        var curY = lastY
+        var moved = false
+
+        // Gabungkan seluruh titik antrean menjadi satu kurva mulus agar tidak tertinggal
+        while (queuedPoints.isNotEmpty()) {
+            val pt = queuedPoints.removeFirst()
+            if (hypot(pt.x - curX, pt.y - curY) >= 0.5f) {
+                path.lineTo(pt.x, pt.y)
+                curX = pt.x
+                curY = pt.y
+                moved = true
+            }
         }
-        val path = Path().apply {
-            moveTo(lastX, lastY)
-            lineTo(targetX, targetY)
+
+        if (!moved) {
+            curX = lastX + 0.3f
+            path.lineTo(curX, curY)
         }
-        val willContinue = !(endingStroke && queuedPoints.isEmpty())
+
+        val willContinue = !endingStroke
         val next = try {
             previous.continueStroke(path, 0, SEGMENT_DURATION_MS, willContinue)
         } catch (error: Exception) {
@@ -107,8 +120,8 @@ class StylusAccessibilityService : AccessibilityService() {
             return
         }
         activeStroke = next
-        lastX = targetX
-        lastY = targetY
+        lastX = curX
+        lastY = curY
         dispatching(next)
     }
 
@@ -126,12 +139,10 @@ class StylusAccessibilityService : AccessibilityService() {
             }
 
             override fun onCancelled(gestureDescription: GestureDescription?) {
-                Log.d(TAG, "Gesture dibatalkan oleh sistem/perangkat")
                 resetStroke()
             }
         }, mainHandler)
         if (!accepted) {
-            Log.w(TAG, "dispatchGesture menolak gesture")
             resetStroke()
         }
     }
@@ -153,7 +164,7 @@ class StylusAccessibilityService : AccessibilityService() {
     companion object {
         private const val TAG = "StylusGesture"
         private const val SEGMENT_DURATION_MS = 16L
-        private const val MAX_QUEUED_POINTS = 24
+        private const val MAX_QUEUED_POINTS = 64
         @Volatile private var instance: StylusAccessibilityService? = null
 
         fun enqueueRemoteTouch(action: String, x: Float, y: Float, pressure: Float) {
