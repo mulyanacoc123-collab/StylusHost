@@ -50,6 +50,10 @@ class CastService : Service() {
     private val jpegBuffer = ByteArrayOutputStream(256 * 1024)
     private val authenticated = Collections.synchronizedMap(mutableMapOf<WebSocket, Boolean>())
 
+    // Pengaturan Kualitas Dinamis (Bisa diubah via Client saat Auth)
+    private var currentJpegQuality = JPEG_QUALITY_DEFAULT
+    private var currentFrameIntervalMs = FRAME_INTERVAL_DEFAULT_MS
+
     override fun onCreate() {
         super.onCreate()
         workerThread = HandlerThread("StylusHost-Capture", android.os.Process.THREAD_PRIORITY_DISPLAY).also { it.start() }
@@ -131,7 +135,7 @@ class CastService : Service() {
             } ?: return@setOnImageAvailableListener
 
             val now = SystemClock.elapsedRealtime()
-            if (now - lastEncodeAtMs < FRAME_INTERVAL_MS) {
+            if (now - lastEncodeAtMs < currentFrameIntervalMs) {
                 image.close()
                 return@setOnImageAvailableListener
             }
@@ -144,7 +148,6 @@ class CastService : Service() {
                 return@setOnImageAvailableListener
             }
 
-            // Cegah penumpukan jaringan: lewati frame jika antrean Wi-Fi sedang penuh
             val readyTargets = targets.filter { it.isOpen && !it.hasBufferedData() }
             if (readyTargets.isEmpty()) {
                 image.close()
@@ -178,7 +181,8 @@ class CastService : Service() {
                 }
 
                 jpegBuffer.reset()
-                cropped.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, jpegBuffer)
+                // Menggunakan kualitas JPEG dinamis (bisa disesuaikan lewat preferensi/client)
+                cropped.compress(Bitmap.CompressFormat.JPEG, currentJpegQuality, jpegBuffer)
                 val bytes = jpegBuffer.toByteArray()
 
                 if (cropped !== bmp) cropped.recycle()
@@ -211,7 +215,7 @@ class CastService : Service() {
         val server = object : WebSocketServer(InetSocketAddress("0.0.0.0", SERVER_PORT)) {
             override fun onOpen(conn: WebSocket, handshake: ClientHandshake) {
                 authenticated[conn] = false
-                conn.send(JSONObject().put("type", "hello").put("message", "Kirim kode pairing").toString())
+                conn.send(JSONObject().put("type", "hello").put("message", "Kirim kode pairing 4 digit").toString())
             }
 
             override fun onMessage(conn: WebSocket, message: String) {
@@ -225,6 +229,17 @@ class CastService : Service() {
                         )
                         if (match && pairingCode.isNotBlank()) {
                             authenticated[conn] = true
+                            
+                            // Menangkap opsi kualitas/FPS opsional yang dikirim dari Client jika ada
+                            if (json.has("quality")) {
+                                val q = json.optInt("quality", 80)
+                                currentJpegQuality = q.coerceIn(40, 95)
+                            }
+                            if (json.has("fps")) {
+                                val fps = json.optInt("fps", 60)
+                                currentFrameIntervalMs = if (fps <= 30) 33L else 16L
+                            }
+
                             conn.send(JSONObject().put("type", "auth_ok").toString())
                         } else {
                             conn.send(JSONObject().put("type", "error").put("message", "Kode pairing salah").toString())
@@ -257,7 +272,7 @@ class CastService : Service() {
             }
 
             override fun onStart() {
-                Log.i(TAG, "WebSocket 60FPS aktif di port $SERVER_PORT")
+                Log.i(TAG, "WebSocket aktif di port $SERVER_PORT dengan dukungan kustom kualitas & FPS")
             }
         }
         server.isTcpNoDelay = true
@@ -294,8 +309,8 @@ class CastService : Service() {
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_menu_camera)
-            .setContentTitle("StylusHost HD 60FPS Aktif")
-            .setContentText("WebSocket port $SERVER_PORT")
+            .setContentTitle("StylusHost 4-Digit & Kualitas Aktif")
+            .setContentText("Port $SERVER_PORT")
             .setContentIntent(openIntent)
             .setOngoing(true)
             .addAction(android.R.drawable.ic_media_pause, "Stop", stopIntent)
@@ -333,7 +348,7 @@ class CastService : Service() {
         private const val CHANNEL_ID = "stylushost_capture"
         private const val NOTIFICATION_ID = 808
         private const val TARGET_LONG_SIDE = 1600
-        private const val JPEG_QUALITY = 82
-        private const val FRAME_INTERVAL_MS = 16L
+        private const val JPEG_QUALITY_DEFAULT = 80
+        private const val FRAME_INTERVAL_DEFAULT_MS = 16L // ~60 FPS
     }
 }
