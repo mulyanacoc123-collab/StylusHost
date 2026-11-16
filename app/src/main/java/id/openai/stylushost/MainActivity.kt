@@ -23,8 +23,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var ipAddressText: TextView
     private lateinit var pairingCodeText: TextView
     private lateinit var statusText: TextView
+    
+    // Diubah menjadi 4 digit (1000 - 9999) agar mudah dimasukkan
     private val pairingCode: String by lazy {
-        val value = SecureRandom().nextInt(90_000_000) + 10_000_000
+        val value = SecureRandom().nextInt(9000) + 1000
         value.toString()
     }
 
