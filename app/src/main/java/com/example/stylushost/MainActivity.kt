@@ -1,157 +1,100 @@
 package com.example.stylushost
 
-import android.Manifest
-import android.content.pm.PackageManager
+import android.app.Activity
+import android.content.Context
+import android.content.Intent
+import android.media.projection.MediaProjectionManager
 import android.os.Bundle
-import android.util.Size
-import android.widget.Toast
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AppCompatActivity
-import androidx.camera.core.CameraSelector
-import androidx.camera.core.ImageAnalysis
-import androidx.camera.core.ImageProxy
-import androidx.camera.core.resolutionselector.ResolutionSelector
-import androidx.camera.core.resolutionselector.ResolutionStrategy
-import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.core.content.ContextCompat
-import com.example.stylushost.databinding.ActivityMainBinding
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
+import android.provider.Settings
+import android.view.Gravity
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.TextView
+import java.net.Inet4Address
+import java.net.NetworkInterface
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : Activity() {
 
-    private lateinit var binding: ActivityMainBinding
-
-    private val annotation = AnnotationLayer()
-    private val composer = FrameComposer(annotation)
-    private lateinit var analysisExecutor: ExecutorService
-
-    @Volatile private var server: StreamServer? = null
-    private var lastFrameNs = 0L
-
-    private val cameraPermission =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            if (granted) startCamera()
-            else Toast.makeText(this, "Izin kamera diperlukan", Toast.LENGTH_LONG).show()
-        }
+    private val REQUEST_CAPTURE = 1001
+    private lateinit var statusText: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        binding = ActivityMainBinding.inflate(layoutInflater)
-        setContentView(binding.root)
 
-        analysisExecutor = Executors.newSingleThreadExecutor()
-
-        binding.btnToggle.setOnClickListener {
-            if (server == null) startServer() else stopServer()
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(48, 48, 48, 48)
         }
-        binding.btnClear.setOnClickListener { annotation.clear() }
-        binding.tvAddress.setOnClickListener { refreshAddress() }
-        refreshAddress()
 
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
-            == PackageManager.PERMISSION_GRANTED
-        ) startCamera() else cameraPermission.launch(Manifest.permission.CAMERA)
+        val ipText = TextView(this).apply {
+            text = "IP Server HP:\n${getLocalIpAddress()}:8080"
+            textSize = 22f
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, 32)
+        }
+
+        statusText = TextView(this).apply {
+            text = "1. Aktifkan Izin Aksesibilitas dulu\n2. Lalu tekan Mulai Screen Cast"
+            textSize = 15f
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, 48)
+        }
+
+        val btnAcc = Button(this).apply {
+            text = "1. Buka Pengaturan Aksesibilitas"
+            setOnClickListener {
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            }
+        }
+
+        val btnStart = Button(this).apply {
+            text = "2. Mulai Screen Cast (Mulai Server)"
+            setOnClickListener {
+                val pm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                startActivityForResult(pm.createScreenCaptureIntent(), REQUEST_CAPTURE)
+            }
+        }
+
+        val btnStop = Button(this).apply {
+            text = "Hentikan Server"
+            setOnClickListener {
+                stopService(Intent(this@MainActivity, ScreenCastService::class.java))
+                statusText.text = "Server Dihentikan"
+            }
+        }
+
+        layout.addView(ipText)
+        layout.addView(statusText)
+        layout.addView(btnAcc)
+        layout.addView(btnStart)
+        layout.addView(btnStop)
+        setContentView(layout)
     }
 
-    // ---------------------------------------------------------------- Server
-
-    private fun startServer() {
-        refreshAddress()
-        val s = StreamServer(PORT, object : StreamServer.Listener {
-            override fun onClientCountChanged(count: Int) = runOnUiThread {
-                binding.tvStatus.text = "Server aktif • $count client terhubung"
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQUEST_CAPTURE && resultCode == RESULT_OK && data != null) {
+            val serviceIntent = Intent(this, ScreenCastService::class.java).apply {
+                putExtra("RESULT_CODE", resultCode)
+                putExtra("DATA", data)
             }
+            startForegroundService(serviceIntent)
+            statusText.text = "SERVER AKTIF!\nSekarang buka ibisPaint X di HP dalam posisi Landscape, lalu sambungkan Tablet."
+        }
+    }
 
-            override fun onCommand(cmd: StylusCommand) {
-                when (cmd) {
-                    is StylusCommand.Point -> annotation.onStylus(cmd.event, cmd.color)
-                    StylusCommand.Clear -> annotation.clear()
-                    StylusCommand.Undo -> annotation.undo()
+    private fun getLocalIpAddress(): String {
+        try {
+            val interfaces = NetworkInterface.getNetworkInterfaces()
+            for (intf in interfaces) {
+                for (addr in intf.inetAddresses) {
+                    if (!addr.isLoopbackAddress && addr is Inet4Address) {
+                        return addr.hostAddress ?: "192.168.43.1"
+                    }
                 }
             }
-
-            override fun onServerError(e: Exception) = runOnUiThread {
-                binding.tvStatus.text = "Error: ${e.message}"
-                server = null
-                binding.btnToggle.text = "Mulai Server"
-            }
-        })
-        s.start()
-        server = s
-        binding.btnToggle.text = "Hentikan Server"
-        binding.tvStatus.text = "Server aktif • 0 client terhubung"
-    }
-
-    private fun stopServer() {
-        val s = server ?: return
-        server = null
-        Thread { try { s.stop(1000) } catch (_: Exception) {} }.start() // stop() memblokir
-        binding.btnToggle.text = "Mulai Server"
-        binding.tvStatus.text = "Server berhenti"
-    }
-
-    private fun refreshAddress() {
-        val ip = NetworkUtils.getLocalIpAddress()
-        binding.tvAddress.text =
-            if (ip != null) "ws://$ip:$PORT" else "Tidak ada jaringan (aktifkan Wi-Fi / Hotspot)"
-    }
-
-    // ---------------------------------------------------------------- Kamera
-
-    private fun startCamera() {
-        val future = ProcessCameraProvider.getInstance(this)
-        future.addListener({
-            val provider = future.get()
-
-            val resolution = ResolutionSelector.Builder()
-                .setResolutionStrategy(
-                    ResolutionStrategy(
-                        Size(1280, 720),
-                        ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER
-                    )
-                ).build()
-
-            val analysis = ImageAnalysis.Builder()
-                .setResolutionSelector(resolution)
-                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
-                .build()
-            analysis.setAnalyzer(analysisExecutor) { proxy -> processFrame(proxy) }
-
-            provider.unbindAll()
-            provider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, analysis)
-        }, ContextCompat.getMainExecutor(this))
-    }
-
-    /** Berjalan di thread analisis: frame -> komposit anotasi -> JPEG -> broadcast. */
-    private fun processFrame(proxy: ImageProxy) {
-        try {
-            val now = System.nanoTime()
-            if (now - lastFrameNs < FRAME_INTERVAL_NS) return // batasi ~30 fps
-            lastFrameNs = now
-
-            val bitmap = proxy.toBitmap()
-            val jpeg = composer.compose(bitmap, proxy.imageInfo.rotationDegrees)
-            bitmap.recycle()
-
-            composer.outputBitmap?.let { binding.previewView.updateFrame(it) }
-            server?.broadcastFrame(jpeg)
-        } catch (e: Exception) {
-            android.util.Log.e("MainActivity", "processFrame gagal", e)
-        } finally {
-            proxy.close()
-        }
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        stopServer()
-        analysisExecutor.shutdown()
-    }
-
-    companion object {
-        const val PORT = 8080
-        private const val FRAME_INTERVAL_NS = 33_000_000L
+        } catch (_: Exception) {}
+        return "192.168.43.1"
     }
 }
