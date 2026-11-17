@@ -181,7 +181,6 @@ class CastService : Service() {
                 }
 
                 jpegBuffer.reset()
-                // Menggunakan kualitas JPEG dinamis (bisa disesuaikan lewat preferensi/client)
                 cropped.compress(Bitmap.CompressFormat.JPEG, currentJpegQuality, jpegBuffer)
                 val bytes = jpegBuffer.toByteArray()
 
@@ -230,7 +229,6 @@ class CastService : Service() {
                         if (match && pairingCode.isNotBlank()) {
                             authenticated[conn] = true
                             
-                            // Menangkap opsi kualitas/FPS opsional yang dikirim dari Client jika ada
                             if (json.has("quality")) {
                                 val q = json.optInt("quality", 80)
                                 currentJpegQuality = q.coerceIn(40, 95)
@@ -250,11 +248,21 @@ class CastService : Service() {
 
                     if (authenticated[conn] != true) return
                     val action = json.optString("action")
-                    val x = json.optDouble("x", -1.0).toFloat()
-                    val y = json.optDouble("y", -1.0).toFloat()
+                    val xNorm = json.optDouble("x", -1.0).toFloat()
+                    val yNorm = json.optDouble("y", -1.0).toFloat()
                     val pressure = json.optDouble("pressure", 1.0).toFloat().coerceIn(0f, 1f)
-                    if (x.isFinite() && y.isFinite() && x in 0f..1f && y in 0f..1f) {
-                        StylusAccessibilityService.enqueueRemoteTouch(action, x, y, pressure)
+
+                    if (xNorm.isFinite() && yNorm.isFinite() && xNorm in 0f..1f && yNorm in 0f..1f) {
+                        // Konversi koordinat normalisasi ke piksel layar fisik Host
+                        val metrics = DisplayMetrics()
+                        @Suppress("DEPRECATION")
+                        (getSystemService(WINDOW_SERVICE) as WindowManager).defaultDisplay.getRealMetrics(metrics)
+                        
+                        val realX = xNorm * metrics.widthPixels.toFloat()
+                        val realY = yNorm * metrics.heightPixels.toFloat()
+
+                        // Menggunakan Shizuku Injector untuk mendukung tekanan (pressure) S-Pen secara native
+                        StylusShizukuInjector.injectPen(action, realX, realY, pressure)
                     }
                 } catch (error: Exception) {
                     Log.w(TAG, "Pesan WebSocket tidak valid", error)
@@ -272,7 +280,7 @@ class CastService : Service() {
             }
 
             override fun onStart() {
-                Log.i(TAG, "WebSocket aktif di port $SERVER_PORT dengan dukungan kustom kualitas & FPS")
+                Log.i(TAG, "WebSocket aktif di port $SERVER_PORT dengan dukungan Shizuku & Pressure S-Pen")
             }
         }
         server.isTcpNoDelay = true
@@ -309,7 +317,7 @@ class CastService : Service() {
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_menu_camera)
-            .setContentTitle("StylusHost 4-Digit & Kualitas Aktif")
+            .setContentTitle("StylusHost Shizuku Aktif")
             .setContentText("Port $SERVER_PORT")
             .setContentIntent(openIntent)
             .setOngoing(true)
