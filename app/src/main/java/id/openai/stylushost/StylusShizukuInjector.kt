@@ -1,26 +1,38 @@
 package id.openai.stylushost
 
+import android.content.pm.PackageManager
 import android.os.Handler
+import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import android.view.InputDevice
 import android.view.InputEvent
 import android.view.MotionEvent
-import android.content.pm.PackageManager
 import rikka.shizuku.Shizuku
 import java.lang.reflect.Method
 
 object StylusShizukuInjector {
     private const val TAG = "StylusShizuku"
-    private val mainHandler = Handler(Looper.getMainLooper())
-
+    
     private var inputManager: Any? = null
     private var injectInputEventMethod: Method? = null
-
     private var downTime = 0L
 
-    // Inisialisasi refleksi untuk mengambil IInputManager via Shizuku binder
+    private val binderReceivedListener = Shizuku.OnBinderReceivedListener {
+        Log.i(TAG, "Shizuku binder terhubung!")
+        initShizuku()
+    }
+
+    init {
+        // Memastikan listener binder Shizuku aktif
+        try {
+            Shizuku.addBinderReceivedListenerSticky(binderReceivedListener)
+        } catch (e: Exception) {
+            Log.e(TAG, "Gagal mendaftarkan Shizuku listener", e)
+        }
+    }
+
     private fun initShizuku() {
         try {
             if (Shizuku.isPreV11() || Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
@@ -28,22 +40,26 @@ object StylusShizukuInjector {
                 return
             }
 
-            // Menggunakan refleksi ServiceManager Android secara langsung melalui Shizuku
+            // Menggunakan refleksi ServiceManager Android via Shizuku binder
             val smClass = Class.forName("android.os.ServiceManager")
             val getServiceMethod = smClass.getMethod("getService", String::class.java)
-            val binder = getServiceMethod.invoke(null, "input") as android.os.IBinder
+            val binder = getServiceMethod.invoke(null, "input") as? IBinder
+
+            if (binder == null) {
+                Log.e(TAG, "Gagal mendapatkan binder input service")
+                return
+            }
 
             val stubClass = Class.forName("android.hardware.input.IInputManager\$Stub")
-            val asInterfaceMethod = stubClass.getMethod("asInterface", android.os.IBinder::class.java)
+            val asInterfaceMethod = stubClass.getMethod("asInterface", IBinder::class.java)
             inputManager = asInterfaceMethod.invoke(null, binder)
 
-            // Menyiapkan method injectInputEvent
             injectInputEventMethod = inputManager?.javaClass?.getMethod(
                 "injectInputEvent",
                 InputEvent::class.java,
                 Int::class.java
             )
-            Log.i(TAG, "Shizuku InputManager berhasil diinisialisasi")
+            Log.i(TAG, "Shizuku InputManager & inject method berhasil diinisialisasi!")
         } catch (e: Exception) {
             Log.e(TAG, "Gagal menginisialisasi Shizuku InputManager", e)
         }
@@ -52,7 +68,10 @@ object StylusShizukuInjector {
     fun injectPen(actionStr: String, x: Float, y: Float, pressure: Float) {
         if (inputManager == null || injectInputEventMethod == null) {
             initShizuku()
-            if (inputManager == null) return
+            if (inputManager == null) {
+                Log.w(TAG, "InputManager masih null, injeksi dibatalkan")
+                return
+            }
         }
 
         val action = when (actionStr.lowercase()) {
@@ -78,7 +97,7 @@ object StylusShizukuInjector {
                 MotionEvent.PointerCoords().apply {
                     this.x = x
                     this.y = y
-                    this.pressure = pressure.coerceIn(0f, 1f) // Nilai pressure 0.0 - 1.0
+                    this.pressure = pressure.coerceIn(0f, 1f)
                     this.size = 1f
                 }
             )
@@ -100,7 +119,7 @@ object StylusShizukuInjector {
                 0
             )
 
-            // INJECT_INPUT_EVENT_MODE_ASYNC = 0 (agar tidak memblokir thread utama)
+            // INJECT_INPUT_EVENT_MODE_ASYNC = 0
             injectInputEventMethod?.invoke(inputManager, ev, 0)
             ev.recycle()
         } catch (e: Exception) {
