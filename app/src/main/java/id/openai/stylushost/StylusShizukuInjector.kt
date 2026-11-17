@@ -29,8 +29,7 @@ object StylusShizukuInjector {
             }
 
             // Mendapatkan system service "input" menggunakan binder Shizuku
-            val binder = rikka.riven.os.ServiceManager.getService("input") 
-                ?: rikka.core.os.ServiceManager.getService("input")
+            val binder = rikka.core.os.ServiceManager.getService("input")
 
             val stubClass = Class.forName("android.hardware.input.IInputManager\$Stub")
             val asInterfaceMethod = stubClass.getMethod("asInterface", android.os.IBinder::class.java)
