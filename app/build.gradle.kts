@@ -30,4 +30,9 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.activity:activity-ktx:1.9.2")
     implementation("org.java-websocket:Java-WebSocket:1.5.6")
+
+    // Shizuku API
+    implementation 'dev.rikka.shizuku:api:13.1.5'
+    // Shizuku Provider (jika diperlukan untuk interaksi binder)
+    implementation 'dev.rikka.shizuku:provider:13.1.5'
 }
