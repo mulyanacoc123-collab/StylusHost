@@ -7,30 +7,31 @@ import android.util.Log
 import android.view.InputDevice
 import android.view.InputEvent
 import android.view.MotionEvent
+import android.content.pm.PackageManager
 import rikka.shizuku.Shizuku
 import java.lang.reflect.Method
 
 object StylusShizukuInjector {
     private const val TAG = "StylusShizuku"
     private val mainHandler = Handler(Looper.getMainLooper())
-    
+
     private var inputManager: Any? = null
     private var injectInputEventMethod: Method? = null
 
     private var downTime = 0L
 
     // Inisialisasi refleksi untuk mengambil IInputManager via Shizuku binder
-    fun initShizuku() {
+    private fun initShizuku() {
         try {
-            if (Shizuku.isPreV11() || Shizuku.checkSelfPermission() != Shizuku.PERMISSION_GRANTED) {
+            if (Shizuku.isPreV11() || Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
                 Log.w(TAG, "Shizuku belum memiliki izin atau belum aktif")
                 return
             }
 
             // Mendapatkan system service "input" menggunakan binder Shizuku
-            val binder = rikka.shizuku.ShizukuBinderWrapper(
-                rikka.core.os.ServiceManager.getService("input")
-            )
+            val binder = rikka.riven.os.ServiceManager.getService("input") 
+                ?: rikka.core.os.ServiceManager.getService("input")
+
             val stubClass = Class.forName("android.hardware.input.IInputManager\$Stub")
             val asInterfaceMethod = stubClass.getMethod("asInterface", android.os.IBinder::class.java)
             inputManager = asInterfaceMethod.invoke(null, binder)
